@@ -1,38 +1,28 @@
 module Main exposing (..)
 
--- Press buttons to increment and decrement a counter.
---
--- Read how it works:
---   https://guide.elm-lang.org/architecture/buttons.html
---
-
 import Browser
-import Html exposing (Html, button, canvas, div, h1, li, section, text, ul)
-import Html.Attributes exposing (class)
+import Html exposing (Html, button, div, h1, h2, li, text, ul)
+import Html.Attributes exposing (style)
 import Html.Events exposing (onClick)
 import Maybe exposing (Maybe(..))
 
 
+startTransmission : TransmissionMode -> Msg
+startTransmission mode =
+    if mode == TransmissionError then
+        StopPresentation
 
--- MAIN
--- Bits inspired by https://github.com/icidasset/elm-binary
+    else
+        StartPresentation
 
 
-type Bits
-    = Bits (List Bool)
+handleStart : Model -> TransmissionMode -> Msg
+handleStart model mode =
+    if mode == model.serverTransmissionMode then
+        SetClientTransmissionMode mode
 
-
-fromIntegers : List Int -> Bits
-fromIntegers =
-    List.map
-        (\i ->
-            if i <= 0 then
-                False
-
-            else
-                True
-        )
-        >> Bits
+    else
+        SetClientTransmissionMode TransmissionError
 
 
 main : Program () Model Msg
@@ -58,33 +48,43 @@ type ModeSelection
     | Window
 
 
+type SelectedScreen
+    = Screen1
+    | Screen2
+    | Window1
+    | Window2
+
+
 type TransmissionMode
     = VNC
     | WebRTC
+    | TransmissionError
 
 
 type alias Model =
-    { clientType : ClientType
-    , title : String
-    , presentationStarted : Bool
-    , showCanvas : Bool
+    { presentationStarted : Bool
+    , activeTransmission : Bool
+    , transmissionPaused : Bool
     , showPopup : Bool
-    , selection : ModeSelection
+    , screenMode : ModeSelection
+    , selectedScreen : SelectedScreen
     , isMobile : Bool
-    , transmissionMode : TransmissionMode
+    , clientTransmissionMode : TransmissionMode
+    , serverTransmissionMode : TransmissionMode
     }
 
 
 init : Model
 init =
-    { clientType = Presenter
-    , title = "Hello"
-    , presentationStarted = False
-    , showCanvas = False
+    { presentationStarted = False
+    , activeTransmission = False
+    , transmissionPaused = False
     , showPopup = False
-    , selection = Screen
+    , screenMode = Screen
+    , selectedScreen = Screen1
     , isMobile = False
-    , transmissionMode = VNC
+    , clientTransmissionMode = VNC
+    , serverTransmissionMode = WebRTC
     }
 
 
@@ -95,14 +95,12 @@ init =
 type Msg
     = StartPresentation
     | StopPresentation
-    | SelectScreen
-    | SelectWindow
-    | ToggleClientType
-
-
-
---    | SelectedScreen Int
---    | SelectedWindow Int
+    | SelectScreenMode ModeSelection
+    | SelectScreen SelectedScreen
+    | PauseTransmission
+    | ToggleMobile
+    | SetClientTransmissionMode TransmissionMode
+    | SetServerTransmissionMode TransmissionMode
 
 
 update : Msg -> Model -> Model
@@ -112,30 +110,63 @@ update msg model =
             { model | presentationStarted = True }
 
         StopPresentation ->
-            { model | presentationStarted = False, showPopup = False }
+            { model | presentationStarted = False, showPopup = False, activeTransmission = False }
 
-        SelectScreen ->
-            { model | selection = Screen, showPopup = True }
+        SelectScreenMode mode ->
+            { model | screenMode = mode, showPopup = True }
 
-        SelectWindow ->
-            { model | selection = Window, showPopup = True }
+        SelectScreen screen ->
+            { model | selectedScreen = screen, activeTransmission = True }
 
-        ToggleClientType ->
+        PauseTransmission ->
             { model
-                | clientType =
-                    if model.clientType == Presenter then
-                        Participant
+                | transmissionPaused =
+                    if model.transmissionPaused == True then
+                        False
 
                     else
-                        Presenter
+                        True
             }
+
+        ToggleMobile ->
+            { model
+                | isMobile =
+                    if model.isMobile then
+                        False
+
+                    else
+                        True
+            }
+
+        SetClientTransmissionMode mode ->
+            { model
+                | clientTransmissionMode = mode
+                , presentationStarted =
+                    if mode == TransmissionError then
+                        False
+
+                    else
+                        True
+                , activeTransmission =
+                    if mode == TransmissionError then
+                        False
+
+                    else if mode == VNC && model.isMobile == True then
+                        True
+
+                    else
+                        model.activeTransmission
+            }
+
+        SetServerTransmissionMode mode ->
+            { model | serverTransmissionMode = mode }
 
 
 
 -- VIEW
 
 
-emptyNode : Html msg
+emptyNode : Html Msg
 emptyNode =
     Html.text ""
 
@@ -143,37 +174,44 @@ emptyNode =
 view : Model -> Html Msg
 view model =
     div []
-        [ button [ onClick ToggleClientType ] [ text "Toggle Client Type" ]
-        , div []
-            [ text
-                (if model.clientType == Presenter then
-                    "Presenter Mode"
-
-                 else
-                    "Participant Mode"
-                )
-            ]
-        , if model.clientType == Presenter then
-            viewPresenter model
-
-          else
-            viewParticipant model
+        [ h1 [] [ text "Server Configs" ]
+        , viewServer model
+        , h1 [] [ text "Presenter" ]
+        , viewPresenter model
+        , h1 [] [ text "Participant" ]
+        , viewParticipant model
         ]
 
 
 viewPresenter : Model -> Html Msg
 viewPresenter model =
-    div [ class "presenter" ]
+    div
+        [ style "border" "1px solid black"
+        , style "padding" "10px"
+        ]
         [ if not model.presentationStarted then
-            button [ onClick StartPresentation ] [ text "Start" ]
+            div []
+                [ button [ onClick (handleStart model VNC) ] [ text "Start VNC" ]
+                , button [ onClick (handleStart model WebRTC) ] [ text "Start WebRTC" ]
+                ]
 
           else
             button [ onClick StopPresentation ] [ text "Stop" ]
-        , if model.presentationStarted && model.transmissionMode == VNC && model.isMobile == False then
+        , if model.clientTransmissionMode == TransmissionError then
+            div [ style "color" "red" ] [ text "Error while starting transmission" ]
+
+          else
+            emptyNode
+        , if model.presentationStarted && model.clientTransmissionMode == VNC && model.isMobile == False then
             div []
-                [ button [ onClick SelectScreen ] [ text "Select Screen" ]
-                , button [ onClick SelectWindow ] [ text "Select Window" ]
+                [ button [ onClick (SelectScreenMode Screen) ] [ text "Select Screen" ]
+                , button [ onClick (SelectScreenMode Window) ] [ text "Select Window" ]
                 ]
+
+          else
+            emptyNode
+        , if model.presentationStarted && model.clientTransmissionMode == WebRTC then
+            div [] [ button [ onClick (SelectScreenMode Screen) ] [ text "Select Screen" ] ]
 
           else
             emptyNode
@@ -187,49 +225,131 @@ viewPresenter model =
 
 viewParticipant : Model -> Html Msg
 viewParticipant model =
-    div [ class "participant" ]
-        [ h1 [] [ text model.title ]
+    div
+        [ style "border" "1px solid black"
+        , style "padding" "10px"
+        ]
+        [ h2 []
+            [ text
+                (if model.clientTransmissionMode == VNC && model.isMobile == True then
+                    "Mobile Display"
+
+                 else
+                    case model.selectedScreen of
+                        Screen1 ->
+                            "Screen 1"
+
+                        Screen2 ->
+                            "Screen 2"
+
+                        Window1 ->
+                            "Window 1"
+
+                        Window2 ->
+                            "Window 2"
+                )
+            ]
         , div [] [ viewCanvas model ]
-        , button [ onClick SelectScreen ] [ text "Select Screen" ]
-        , button [ onClick SelectWindow ] [ text "Select Window" ]
         ]
 
 
-viewCanvas : Model -> Html msg
+viewCanvas : Model -> Html Msg
 viewCanvas model =
-    div []
-        [ if model.showCanvas then
-            canvas [] []
+    div
+        [ style "border" "1px solid black"
+        , style "padding" "10px"
+        ]
+        [ if model.activeTransmission then
+            div []
+                [ button [ onClick PauseTransmission ] [ text "Pause" ]
+                , div
+                    [ style "border" "1px solid red"
+                    , style "padding" "10px"
+                    , style "text-align" "center"
+                    ]
+                    [ text
+                        ("Canvas"
+                            ++ (if model.transmissionPaused then
+                                    " (PAUSED)"
+
+                                else
+                                    ""
+                               )
+                        )
+                    ]
+                ]
 
           else
             div [] [ text "Presentation not started" ]
         ]
 
 
-viewPopup : Model -> Html msg
+viewPopup : Model -> Html Msg
 viewPopup model =
     div []
         [ text "Popup"
         , ul []
             [ li []
                 [ text "Screens"
-                , if model.selection == Screen then
-                    text "(selected)"
+                , if model.screenMode == Screen then
+                    text " (selected)"
 
                   else
                     emptyNode
-                , button [{- onClick SelectedScreen -}] [ text "Screen 1" ]
-                , button [{- onClick SelectedScreen -}] [ text "Screen 2" ]
+                , button [ onClick (SelectScreen Screen1) ] [ text "Screen 1" ]
+                , button [ onClick (SelectScreen Screen2) ] [ text "Screen 2" ]
                 ]
-            , li []
-                [ text "Windows"
-                , if model.selection == Window then
-                    text "(selected)"
+            , if model.clientTransmissionMode == VNC then
+                li []
+                    [ text "Windows"
+                    , if model.screenMode == Window then
+                        text " (selected)"
 
-                  else
-                    emptyNode
-                , button [] [ text "Window 1" ]
-                , button [] [ text "Window 2" ]
+                      else
+                        emptyNode
+                    , button [ onClick (SelectScreen Window1) ] [ text "Window 1" ]
+                    , button [ onClick (SelectScreen Window2) ] [ text "Window 2" ]
+                    ]
+
+              else
+                emptyNode
+            ]
+        ]
+
+
+viewServer : Model -> Html Msg
+viewServer model =
+    div []
+        [ button [ onClick ToggleMobile ] [ text "Toggle Mobile" ]
+        , div []
+            [ text
+                ("Is mobile: "
+                    ++ (if model.isMobile then
+                            "True"
+
+                        else
+                            "False"
+                       )
+                )
+            ]
+        , div []
+            [ button [ onClick (SetServerTransmissionMode VNC) ] [ text "Transmission VNC" ]
+            , button [ onClick (SetServerTransmissionMode WebRTC) ] [ text "Transmission WebRTC" ]
+            , button [ onClick (SetServerTransmissionMode TransmissionError) ] [ text "Transmission Error" ]
+            , div []
+                [ text
+                    ("Transmission: "
+                        ++ (case model.serverTransmissionMode of
+                                VNC ->
+                                    "VNC"
+
+                                WebRTC ->
+                                    "WebRTC"
+
+                                TransmissionError ->
+                                    "TransmissionError"
+                           )
+                    )
                 ]
             ]
         ]
